@@ -23,7 +23,7 @@ Your output is ALWAYS a single valid JSON object. No markdown. No code fences. N
 
 ---
 
-CALCULATION METHODOLOGY — follow these exactly:
+CALCULATION METHODOLOGY - follow these exactly:
 
 BMR CALCULATION (Harris-Benedict Revised):
   Male:   BMR = 88.362 + (13.397 x kg) + (4.799 x cm) - (5.677 x age)
@@ -86,6 +86,8 @@ ENDURANCE (running, cycling, triathlon, swimming, rowing, cross-country):
   - Fueling DURING exercise is critical (30-60g carbs/hr for efforts >90 min)
   - No game-day protocol - use race-day / long run protocol instead
   - Carbohydrate loading section replaces game-day if applicable
+  - Beta-alanine and sodium bicarbonate: evidence-based for endurance
+  - Iron: high depletion risk, especially female distance runners
 
 POWERLIFTING / STRENGTH SPORTS:
   - Very high protein (1.8-2.5 g/kg)
@@ -97,11 +99,13 @@ BODYBUILDING / PHYSIQUE:
   - Bulking phase: caloric surplus 250-500 kcal above TDEE
   - Cutting phase: caloric deficit 300-500 kcal below TDEE, high protein to preserve muscle
   - No game-day protocol - use competition prep section if in prep
+  - Peak week: water/sodium/carbohydrate manipulation guidance
 
 COMBAT SPORTS (wrestling, MMA, boxing, judo):
   - Weight cut section if athlete cuts weight for competition
   - Rehydration protocol post-weigh-in
   - Competition-day fueling between weigh-in and bout
+  - High protein, moderate carbs
 
 ---
 
@@ -128,7 +132,7 @@ INJURY PREVENTION - include this section if:
 DIET GAP ANALYSIS - based on "typical day of eating":
   Identify 2-4 genuine strengths
   Identify 3-6 gaps the plan directly addresses
-  Be specific
+  Be specific - "skips breakfast" not "suboptimal morning nutrition"
 
 ---
 
@@ -207,35 +211,67 @@ OUTPUT FORMAT - strict JSON schema. Every key is required.
 }"""
 
 
+def extract_fields(tally_payload):
+    """Extract field values from Tally webhook payload into a flat dict."""
+    fields = {}
+    try:
+        data = tally_payload.get("data", {})
+        for field in data.get("fields", []):
+            label = field.get("label", "")
+            value = field.get("value", "")
+            options = field.get("options", [])
+            option_map = {o.get("id"): o.get("text") for o in options}
+
+            if isinstance(value, list):
+                resolved = [option_map.get(v, str(v)) for v in value if v]
+                value = ", ".join(r for r in resolved if r)
+            elif isinstance(value, str) and value in option_map:
+                value = option_map[value]
+
+            fields[label] = value or ""
+
+        # Debug: print all field labels received
+        print("=== TALLY FIELDS RECEIVED ===")
+        for k, v in fields.items():
+            print(f"  [{k}] = {str(v)[:80]}")
+        print("=== END FIELDS ===")
+
+    except Exception as e:
+        print(f"Error extracting fields: {e}")
+        traceback.print_exc()
+    return fields
+
+
 def build_user_message(fields):
-    """Build the user message from Tally webhook fields."""
+    """Build Claude user message from extracted Tally fields."""
     def get(key, default="Not provided"):
-        return fields.get(key) or default
+        v = fields.get(key, "")
+        return v if v else default
 
     return f"""Generate a complete personalized performance fueling plan for the following athlete. Output only the JSON object. No markdown, no explanation, no code fences. Start with {{ and end with }}.
 
-Fields marked as blank or empty should be ignored - some questions are optional and some are conditional on previous answers. Build the plan using only the populated fields.
+Fields marked as blank or Not provided should be ignored - some questions are optional and some are conditional on previous answers. Build the plan using only the populated fields.
 
 ---
 
 PAGE 1 - PERSONAL INFORMATION
 
-First name: {get('First name')}
-Last name: {get('Last name')}
-Email address: {get('Email address')}
-Phone number: {get('Phone number')}
+First name: {get('First Name')}
+Last name: {get('Last Name')}
+Email address: {get('Email Address')}
+Phone number: {get('Phone Number (optional)')}
 
 ---
 
 PAGE 2 - ATHLETE PROFILE
 
-Biological sex: {get('Biological sex')}
-Date of birth: {get('Date of birth')}
+Biological sex: {get('Biological Sex')}
+Date of birth: {get('Date of Birth')}
 Height: {get('Height')}
-Current weight: {get('Current weight')}
+Weight (lbs): {get('Weight (lbs)')}
 Sport: {get('Sport')}
 Position or role: {get('Position or role')}
-Briefly describe your daily schedule: {get('Briefly describe your daily schedule')}
+Daily schedule: {get('Briefly describe your daily schedule')}
 
 ---
 
@@ -243,62 +279,61 @@ PAGE 3 - TRAINING & SEASON
 
 What best describes your sport: {get('What best describes your sport?')}
 
-[TEAM SPORT / INDIVIDUAL SPORT]
-Current season phase: {get('Current season phase')}
-Training days per week: {get('Training days per week')}
-Typical session length: {get('Typical session length')}
+[TEAM SPORT / INDIVIDUAL SPORT - shown if Team sport or Individual sport with competition season]
+Current season phase: {get('Current Season Phase')}
+Training days per week: {get('Training Days Per Week')}
+Typical session length: {get('Typical Session Length')}
 Do you do strength or weight training: {get('Do you do strength or weight training?')}
 How many days per week do you lift: {get('How many days per week do you lift?')}
-Do you have game days: {get('Do you have game days?')}
-What day(s) do you typically play: {get("What day(s) do you typically play?")}
-Training environment: {get('Training environment')}
+Do you have game days: {get('Do you have Game Days')}
+What day(s) of the week: {get('What day(s) of the week')}
+Training environment: {get('Training Environment')}
 
-[STRENGTH / PHYSIQUE SPORT]
-Are you currently preparing for a competition: {get('Are you currently preparing for a competition?')}
-What is the competition: {get('What is the competition?')}
-How many weeks out: {get('How many weeks out?')}
-Current prep phase: {get('Current prep phase')}
-Current focus if not competing: {get('Current focus')}
-How long have you been training seriously: {get('How long have you been training seriously?')}
-Training days per week: {get('Training days per week')}
-Typical session length: {get('Typical session length')}
-Training split: {get('Training split')}
-Training environment: {get('Training environment')}
+[STRENGTH / PHYSIQUE SPORT - shown if Strength or physique sport]
+Do you have a competition scheduled: {get('Strength or physique - Do you have a competition scheduled?')}
+What is the competition: {get('Strength or physique --What is the competition')}
+How many weeks out: {get('Strength or physique - How many weeks out are you')}
+Current prep phase: {get('Strength or physique - Current prep phase')}
+Current focus (if not competing): {get('Strength or physique - Current Focus')}
+How long have you been training: {get('Strength or physique - How long have you been training')}
+Training days per week: {get('Strength or physique - Training days per week')}
+Typical session length: {get('Strength or physique - Typical session length')}
+Training split: {get('Strength or physique - What does your training split look like?')}
 
-[COMBAT SPORT]
-Current season phase: {get('Current season phase')}
-Do you need to cut weight for a weigh-in: {get('Do you need to cut weight for a weigh-in?')}
-How much and by when: {get('How much and by when?')}
-Training days per week: {get('Training days per week')}
-Typical session length: {get('Typical session length')}
-Training environment: {get('Training environment')}
+[COMBAT SPORT - shown if Combat sport]
+Current season phase: {get('Combat - Current season phase')}
+Do you need to cut weight for a weigh-in: {get('Combat - Do you need to cut weight for a weigh-in?')}
+How much and by when: {get('Combat - How much and by when?')}
+Training days per week: {get('Combat - Training days per week')}
+Typical session length: {get('Combat - Typical session length')}
 
-[ENDURANCE SPORT]
-Primary endurance discipline: {get('Primary endurance discipline')}
-Current season phase: {get('Current season phase')}
-Training days per week: {get('Training days per week')}
-Typical weekly training volume: {get('Typical weekly training volume')}
-Typical long session length: {get('Typical long session length')}
-Do you also do strength training: {get('Do you also do strength training?')}
-How many days per week strength: {get('How many days per week?')}
-Do you have a major event or race coming up: {get('Do you have a major event or race coming up?')}
-What is the event: {get('What is the event?')}
-Approximate event duration: {get('Approximate event duration')}
-How many weeks out: {get('How many weeks out?')}
-Have you done this event or distance before: {get('Have you done this event or distance before?')}
-Have you had GI issues during past races or long training sessions: {get('Have you had GI issues during past races or long training sessions?')}
-What do you currently use for in-session fueling on long efforts: {get('What do you currently use for in-session fueling on long efforts?')}
-Training environment: {get('Training environment')}
+[ENDURANCE SPORT - shown if Endurance sport]
+Primary endurance discipline: {get('What is your primary endurance discipline?')}
+Season phase: {get('Endurance - Season phase')}
+Training days per week: {get('Endurance - Training days/week')}
+Typical weekly training volume: {get('Endurance - Typical weekly training volume')}
+Typical session length: {get('Endurance - Typical session length')}
+Do you also do strength training: {get('Endurance - Do you also do strength training?')}
+How many days per week (strength): {get('Endurance - How many days per week?')}
+Training environment: {get('Endurance - Training environment')}
+Do you have a major event or race coming up: {get('Endurance - Do you have a major event or race coming up?')}
+What is the event: {get('Endurance - What is the event?')}
+Approximate event duration: {get('Endurance - Approximate event duration')}
+How many weeks out: {get('Endurance - How many weeks out are you?')}
+Have you done this event or distance before: {get('Endurance - Have you done this event or distance before?')}
+Have you had GI issues during past races or long training sessions: {get('Endurance - Have you had any GI issues during past races or long training sessions?')}
+What do you currently use for in-session fueling on long efforts: {get('Endurance - What do you currently use for in-session fueling on long efforts?')}
 
-[ALL SPORT TYPES]
-Are you currently recovering from an injury: {get('Are you currently recovering from an injury?')}
-What is the injury and what phase of recovery are you in: {get('What is the injury and what phase of recovery are you in?')}
+[ALL SPORT TYPES - always shown]
+Are you recovering from an injury: {get('Are you recovering from an injury?')}
+Injury details and recovery phase: {get('What is the injury and what phase of recovery are you in?')}
+Do you track your nutrition currently: {get('Do you track your nutrition currently?')}
 
 ---
 
-PAGE 4 - GOALS & PREFERENCES
+PAGE 4 - GOALS
 
-Primary goals: {get('Primary goals')}
+Primary goal: {get('Primary goal')}
 What does success look like for you: {get('What does success look like for you?')}
 How important is diet flexibility to you: {get('How important is diet flexibility to you?')}
 
@@ -312,56 +347,35 @@ Do you eat anything before practice or training: {get('Do you eat anything befor
 Any food allergies or intolerances: {get('Any food allergies or intolerances?')}
 Any dietary preferences or restrictions: {get('Any dietary preferences or restrictions?')}
 Foods you strongly dislike or refuse to eat: {get('Foods you strongly dislike or refuse to eat')}
-Supplements currently taking: {get('Supplements currently taking')}
-Please specify other supplements: {get('Please specify')}
-Supplementation approach: {get('Supplementation approach')}
-Which compounds are you currently using: {get('Which compounds are you currently using?')}
+Supplements currently taking: {get('Are you currently taking any supplements?')}
+Other supplements (specify): {get('If you selected other, please specify')}
+Peptide/PED approach: {get('What best describes your current peptide/PED approach?')}
+Compounds currently using: {get('Which compounds are you currently using?')}
 
 ---
 
 PAGE 6 - HEALTH & BACKGROUND
 
-Average sleep on a typical night: {get('Average sleep on a typical night')}
-Any current injuries or physical limitations: {get('Any current injuries or physical limitations?')}
-Any diagnosed medical conditions or medications relevant to your nutrition: {get('Any diagnosed medical conditions or medications relevant to your nutrition?')}
-Please describe condition or medication: {get('Please describe')}
+Average sleep per night: {get('How many hours of sleep do you get on a typical night?')}
+Current injuries or physical limitations: {get('Any current injuries or physical limitations we should know about?')}
+Diagnosed medical conditions or medications: {get('Any diagnosed medical conditions or medications relevant to your nutrition?')}
+Please describe condition or medication: {get('Please describe your condition or medication')}
 
 ---
 
-PROTOCOL SELECTION - apply silently based on sport type:
+PROTOCOL SELECTION - apply silently based on sport type field:
 
 Team sport / Individual sport with competition season:
-Use the daily schedule description to place meals at specific clock times. Apply game-day protocol. Season phase drives carbohydrate periodization. Account for lift frequency if strength training is included. Electrolytes critical if training environment is outdoors hot or humid.
+Use the daily schedule to place meals at specific clock times. Apply game-day protocol. Season phase drives carbohydrate periodization. Account for lift frequency. Electrolytes critical if training environment is outdoors in heat.
 
 Strength or physique sport:
-Ignore school and practice time fields. Set calorie surplus (bulking/off-season building) or deficit (cutting/contest prep) based on current focus or prep phase. If peak week is indicated, include water/sodium/carbohydrate manipulation guidance. Very high protein. Replace game-day section with competition day or meet-day protocol.
+Use daily schedule for gym timing only. Set calorie surplus (bulking/off-season) or deficit (cutting/contest prep) based on current focus or prep phase. If peak week, include water/sodium/carbohydrate manipulation. Very high protein. Replace game-day with meet-day or competition-day protocol.
 
 Combat sport:
-If weight cut indicated, include pre-weigh-in cut protocol and post-weigh-in rehydration and refueling protocol. Replace game-day with bout-day protocol. High protein, moderate carb.
+If weight cut indicated, include pre-weigh-in cut protocol and post-weigh-in rehydration. Replace game-day with bout-day protocol. High protein, moderate carb.
 
 Endurance sport:
-Apply high carbohydrate periodization - 8-12 g/kg on long training days, lower on easy days. Include intra-workout fueling protocol (30-60g carbs per hour for sessions over 90 min). If GI issues reported, use gut-trained low-FODMAP fueling strategy. Replace game-day with race-day protocol scaled to event duration. If within 2 weeks of event, include carbohydrate loading protocol."""
-
-
-def extract_fields(tally_payload):
-    """Extract field values from Tally webhook payload into a flat dict."""
-    fields = {}
-    try:
-        data = tally_payload.get("data", {})
-        for field in data.get("fields", []):
-            label = field.get("label", "")
-            value = field.get("value", "")
-            # Handle array values (checkboxes, multi-select)
-            if isinstance(value, list):
-                # Try to get text from options
-                options = field.get("options", [])
-                option_map = {o.get("id"): o.get("text") for o in options}
-                resolved = [option_map.get(v, v) for v in value]
-                value = ", ".join(str(r) for r in resolved if r)
-            fields[label] = value
-    except Exception as e:
-        print(f"Error extracting fields: {e}")
-    return fields
+Apply high carbohydrate periodization - 8-12 g/kg on long training days. Include intra-workout fueling (30-60g carbs/hr for sessions over 90 min). If GI issues reported, use low-FODMAP fueling strategy. Replace game-day with race-day protocol scaled to event duration. If within 2 weeks of event, include carbohydrate loading protocol."""
 
 
 @app.route("/health", methods=["GET"])
@@ -375,13 +389,18 @@ def webhook():
         # Parse Tally payload
         raw = request.get_data(as_text=False).decode("utf-8")
         tally_payload = json_lib.loads(raw)
-        print(f"=== TALLY WEBHOOK RECEIVED ===")
+        print("=== TALLY WEBHOOK RECEIVED ===")
 
         # Extract fields
         fields = extract_fields(tally_payload)
-        athlete_name = f"{fields.get('First name', '')} {fields.get('Last name', '')}".strip()
-        athlete_email = fields.get("Email address", "")
-        print(f"=== ATHLETE: {athlete_name} | {athlete_email} ===")
+
+        first_name = fields.get("First Name", "").strip()
+        last_name  = fields.get("Last Name", "").strip()
+        athlete_name = f"{first_name} {last_name}".strip() or "Unknown Athlete"
+        athlete_email = fields.get("Email Address", "").strip()
+        sport = fields.get("Sport", "Unknown Sport")
+
+        print(f"=== ATHLETE: {athlete_name} | {athlete_email} | {sport} ===")
 
         # Call Claude API
         print("=== CALLING CLAUDE API ===")
@@ -394,7 +413,7 @@ def webhook():
             messages=[{"role": "user", "content": build_user_message(fields)}]
         )
         plan_json_str = message.content[0].text
-        print(f"=== CLAUDE RESPONSE LENGTH: {len(plan_json_str)} ===")
+        print(f"=== CLAUDE RESPONSE LENGTH: {len(plan_json_str)} chars ===")
 
         # Parse JSON
         athlete_data = json_lib.loads(plan_json_str)
@@ -402,33 +421,34 @@ def webhook():
 
         # Generate PDF
         print("=== GENERATING PDF ===")
+        safe_name = athlete_name.replace(" ", "_").replace("/", "_")
         tmp = tempfile.NamedTemporaryFile(
             suffix=".pdf",
-            prefix=f"{athlete_name.replace(' ', '_')}_",
+            prefix=f"{safe_name}_",
             delete=False
         )
         tmp.close()
         generate_plan(athlete_data, output_path=tmp.name)
-        print(f"=== PDF GENERATED: {tmp.name} ===")
+        print(f"=== PDF GENERATED ===")
 
-        # Read PDF and encode
+        # Read and encode PDF
         with open(tmp.name, "rb") as f:
             pdf_data = f.read()
         pdf_b64 = base64.b64encode(pdf_data).decode()
+        filename = f"{safe_name}_Fueling_Plan.pdf"
 
         # Send email via SendGrid
         print("=== SENDING EMAIL ===")
-        filename = f"{athlete_name.replace(' ', '_')}_Fueling_Plan.pdf"
-        message = Mail(
+        mail = Mail(
             from_email=DELIVERY_EMAIL,
             to_emails=DELIVERY_EMAIL,
-            subject=f"New Plan Ready - {athlete_name} ({fields.get('Sport', 'Unknown Sport')})",
+            subject=f"New Plan Ready - {athlete_name} ({sport})",
             plain_text_content=(
                 f"New athlete fueling plan generated.\n\n"
                 f"Athlete: {athlete_name}\n"
                 f"Email: {athlete_email}\n"
-                f"Sport: {fields.get('Sport', 'Unknown')}\n"
-                f"Goal: {fields.get('Primary goals', 'Unknown')}\n\n"
+                f"Sport: {sport}\n"
+                f"Goal: {fields.get('Primary goal', 'Unknown')}\n\n"
                 f"PDF attached. Review before forwarding to athlete."
             )
         )
@@ -438,12 +458,12 @@ def webhook():
             FileType("application/pdf"),
             Disposition("attachment")
         )
-        message.attachment = attachment
+        mail.attachment = attachment
         sg = SendGridAPIClient(SENDGRID_API_KEY)
-        sg.send(message)
-        print("=== EMAIL SENT ===")
+        sg.send(mail)
+        print("=== EMAIL SENT SUCCESSFULLY ===")
 
-        # Cleanup
+        # Cleanup temp file
         os.unlink(tmp.name)
 
         return jsonify({"status": "success", "athlete": athlete_name}), 200
