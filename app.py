@@ -12,7 +12,7 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        athlete = request.get_json()
+        athlete = request.get_json(force=True, silent=True)
         if not athlete:
             return jsonify({"error": "No JSON body received"}), 400
 
