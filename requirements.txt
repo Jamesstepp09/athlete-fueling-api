@@ -1,5 +1,6 @@
 flask
-reportlab
-gunicorn
+flask-cors
 anthropic
 sendgrid
+reportlab
+gunicorn
