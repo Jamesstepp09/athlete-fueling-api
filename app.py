@@ -12,9 +12,12 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        athlete = request.get_json(force=True, silent=True)
-        if not athlete:
-            return jsonify({"error": "No JSON body received"}), 400
+        import json as json_lib
+raw = request.get_data(as_text=True)
+try:
+    athlete = json_lib.loads(raw)
+except Exception:
+    return jsonify({"error": "Could not parse JSON body"}), 400
 
         # Write PDF to a temp file
         athlete_name = athlete.get("name", "Athlete").replace(" ", "_")
