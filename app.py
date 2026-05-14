@@ -14,7 +14,7 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        raw = request.get_data(as_text=True)
+        raw = request.get_data(as_text=False).decode('utf-8')
         try:
             athlete = json_lib.loads(raw)
         except Exception:
