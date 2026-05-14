@@ -2,7 +2,6 @@ from flask import Flask, request, send_file, jsonify
 import tempfile
 import os
 import traceback
-from generate_plan import generate_plan
 
 app = Flask(__name__)
 
