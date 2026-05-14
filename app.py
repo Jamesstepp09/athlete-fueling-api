@@ -17,6 +17,13 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 SENDGRID_API_KEY  = os.environ.get("SENDGRID_API_KEY")
 DELIVERY_EMAIL    = os.environ.get("DELIVERY_EMAIL")
 
+# ── DEDUPLICATION ─────────────────────────────────────────────────────────────
+# In-memory set of processed submission IDs.
+# Resets on restart, but combined with the Starter plan (always-on),
+# restarts are rare and cold-start replays are eliminated at the source.
+seen_submissions = set()
+# ─────────────────────────────────────────────────────────────────────────────
+
 SYSTEM_PROMPT = """You are an expert sports dietitian and performance nutritionist with advanced credentials in sports science. You generate fully personalized, evidence-based athlete fueling plans using published guidelines from ISSN, ACSM, AAP, and the Dietary Guidelines for Americans 2020-2025.
 
 Your output is ALWAYS a single valid JSON object. No markdown. No code fences. No preamble. No explanation. Just the raw JSON object starting with { and ending with }. Any deviation from this will break the downstream PDF pipeline.
@@ -390,6 +397,21 @@ def webhook():
         raw = request.get_data(as_text=False).decode("utf-8")
         tally_payload = json_lib.loads(raw)
         print("=== TALLY WEBHOOK RECEIVED ===")
+
+        # ── DEDUPLICATION CHECK ───────────────────────────────────────────────
+        submission_id = (
+            tally_payload.get("data", {}).get("submissionId")
+            or tally_payload.get("submissionId")
+        )
+        if submission_id:
+            if submission_id in seen_submissions:
+                print(f"=== DUPLICATE SKIPPED: {submission_id} ===")
+                return jsonify({"status": "duplicate", "skipped": True}), 200
+            seen_submissions.add(submission_id)
+            print(f"=== NEW SUBMISSION: {submission_id} ===")
+        else:
+            print("=== WARNING: No submissionId found in payload ===")
+        # ─────────────────────────────────────────────────────────────────────
 
         # Extract fields
         fields = extract_fields(tally_payload)
