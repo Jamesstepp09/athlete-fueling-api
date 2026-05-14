@@ -14,14 +14,20 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        raw = request.get_data(as_text=False).decode('utf-8')
+        raw = request.get_data(as_text=False)
+        print(f"=== RAW BODY LENGTH: {len(raw)} bytes ===")
+        print(f"=== CONTENT TYPE: {request.content_type} ===")
+        print(f"=== FIRST 500 CHARS: {raw[:500]} ===")
+
         try:
-            athlete = json_lib.loads(raw)
-        except Exception:
-            return jsonify({"error": "Could not parse JSON body"}), 400
+            raw_str = raw.decode('utf-8')
+            athlete = json_lib.loads(raw_str)
+        except Exception as e:
+            print(f"=== PARSE ERROR: {e} ===")
+            return jsonify({"error": f"Could not parse JSON body: {str(e)}", "body_length": len(raw), "first_100": str(raw[:100])}), 400
 
         if not athlete:
-            return jsonify({"error": "No JSON body received"}), 400
+            return jsonify({"error": "Empty body"}), 400
 
         athlete_name = athlete.get("name", "Athlete").replace(" ", "_")
         tmp = tempfile.NamedTemporaryFile(
